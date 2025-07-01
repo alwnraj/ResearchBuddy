@@ -81,12 +81,27 @@ const ResearchBuddy = () => {
   const pdfViewerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    console.log("ResearchBuddy component mounted.");
+  }, []);
+
+  useEffect(() => {
     // Reset transform when a new PDF is loaded
     setTransform({ scale: 1, x: 0, y: 0 });
+    if (pdfFile) console.log("PDF file state updated:", pdfFile.name);
   }, [pdfFile]);
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      console.log(
+        "Messages state updated. New message:",
+        messages[messages.length - 1]
+      );
+    }
+  }, [messages]);
 
   // Handle file upload
   const handleFileUpload = async (file: File) => {
+    console.log("File upload initiated:", file.name);
     if (file && file.type === "application/pdf") {
       setPdfFile(file);
       setMessages([
@@ -98,6 +113,7 @@ const ResearchBuddy = () => {
 
       // Extract text from PDF
       try {
+        console.log("Starting PDF text extraction...");
         const reader = new FileReader();
         reader.onload = async (event) => {
           if (event.target && event.target.result) {
@@ -114,6 +130,7 @@ const ResearchBuddy = () => {
             }
             setPdfText(fullText);
             setNumPages(pdf.numPages);
+            console.log("PDF text extraction successful.");
           }
         };
         reader.readAsArrayBuffer(file);
@@ -163,6 +180,7 @@ const ResearchBuddy = () => {
   // Send message
   const sendMessage = async () => {
     if (!currentMessage.trim()) return;
+    console.log("Sending message to Gemini API...");
 
     const userMessage: Message = { role: "user", content: currentMessage };
     setMessages((prev) => [...prev, userMessage]);
