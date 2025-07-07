@@ -409,6 +409,10 @@ const ResearchBuddy = () => {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfText, setPdfText] = useState<string>("");
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [pdfDimensions, setPdfDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const [selectedText, setSelectedText] = useState<string>("");
 
   // Chat and Messaging State
@@ -773,6 +777,7 @@ const ResearchBuddy = () => {
       console.log("🔄 Resetting application state...");
       setPdfText("");
       setNumPages(null);
+      setPdfDimensions(null);
       setSelectedText("");
       setTransform({ scale: 1, x: 0, y: 0 });
       setIsLoading(false);
@@ -985,6 +990,7 @@ const ResearchBuddy = () => {
       setPdfFile(null);
       setPdfText("");
       setNumPages(null);
+      setPdfDimensions(null);
       setSelectedText("");
       setTransform({ scale: 1, x: 0, y: 0 });
 
@@ -1522,7 +1528,7 @@ JSON Response:`;
       >
         <Panel defaultSize={50} minSize={25}>
           {/* PDF Viewer Side */}
-          <div className="w-full h-full bg-neutral-800 ml-4 mr-2 my-4 rounded-2xl shadow-xl flex flex-col border border-neutral-700">
+          <div className="w-full h-full bg-neutral-800 flex flex-col border-r border-neutral-700">
             <div className="px-6 py-3 border-b border-neutral-700">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-neutral-100">
@@ -1655,7 +1661,7 @@ JSON Response:`;
               <div className="flex-1 relative">
                 <div
                   ref={pdfViewerRef}
-                  className="absolute inset-0 overflow-hidden"
+                  className="absolute inset-0 overflow-auto pdf-scrollbar"
                   onWheel={handleWheel}
                   onMouseDown={handleMouseDown}
                   onMouseMove={handleMouseMove}
@@ -1671,126 +1677,165 @@ JSON Response:`;
                     userSelect: isTextSelectionMode ? "text" : "none",
                   }}
                 >
+                  {/* Virtual scrollable container that defines scroll boundaries */}
                   <div
-                    className="absolute top-0 left-0"
                     style={{
-                      transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                      transformOrigin: "top left",
-                      transition: isPanning
-                        ? "none"
-                        : "transform 0.1s ease-out",
-                      imageRendering: "crisp-edges" as any,
+                      width: `${
+                        (pdfDimensions?.width || 1200) * transform.scale
+                      }px`,
+                      height: `${
+                        numPages && pdfDimensions
+                          ? (pdfDimensions.height + 16) *
+                            numPages *
+                            transform.scale
+                          : 1000
+                      }px`, // Actual PDF height per page + margin (16px) * number of pages * zoom scale
+                      minWidth: "100%",
+                      minHeight: "100%",
+                      position: "relative",
                     }}
-                    onMouseUp={handleTextSelection}
                   >
-                    <PDFErrorBoundary
-                      onError={(error) => {
-                        setMessages((prev) => [
-                          ...prev,
-                          {
-                            role: "assistant",
-                            content:
-                              "I encountered an error while displaying the PDF. Please try uploading the file again or use a different PDF.",
-                          },
-                        ]);
+                    <div
+                      className="absolute top-0 left-0"
+                      style={{
+                        transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+                        transformOrigin: "top left",
+                        transition: isPanning
+                          ? "none"
+                          : "transform 0.1s ease-out",
+                        imageRendering: "crisp-edges" as any,
                       }}
+                      onMouseUp={handleTextSelection}
                     >
-                      <Document
-                        file={pdfFile}
-                        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-                        onLoadError={(error) => {
-                          console.error("PDF loading error:", error);
+                      <PDFErrorBoundary
+                        onError={(error) => {
                           setMessages((prev) => [
                             ...prev,
                             {
                               role: "assistant",
                               content:
-                                "I'm sorry, there was an error loading the PDF. Please try uploading again or use a different PDF file.",
+                                "I encountered an error while displaying the PDF. Please try uploading the file again or use a different PDF.",
                             },
                           ]);
                         }}
-                        className={
-                          isTextSelectionMode ? "select-text" : "select-none"
-                        }
-                        options={pdfOptions}
                       >
-                        {Array.from(new Array(numPages), (el, index) => (
-                          <Page
-                            key={`page_${index + 1}`}
-                            pageNumber={index + 1}
-                            className="mb-4 shadow-lg"
-                            scale={2.0} // Higher base resolution
-                            devicePixelRatio={window.devicePixelRatio || 2}
-                            renderTextLayer={isTextSelectionMode}
-                            renderAnnotationLayer={false}
-                            canvasBackground="white"
-                            loading={
-                              <div className="flex items-center justify-center p-8 text-neutral-400">
-                                <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                                Rendering high-quality page {index + 1}...
-                              </div>
+                        <Document
+                          file={pdfFile}
+                          onLoadSuccess={async ({ numPages }) => {
+                            setNumPages(numPages);
+                            // Get first page to determine dimensions
+                            try {
+                              const pdf = await pdfjs.getDocument({
+                                data: await pdfFile.arrayBuffer(),
+                              }).promise;
+                              const page = await pdf.getPage(1);
+                              const viewport = page.getViewport({ scale: 2.0 }); // Match our base scale
+                              setPdfDimensions({
+                                width: viewport.width,
+                                height: viewport.height,
+                              });
+                            } catch (error) {
+                              console.error(
+                                "Error getting PDF dimensions:",
+                                error
+                              );
+                              // Fallback to standard dimensions
+                              setPdfDimensions({ width: 1200, height: 1700 });
                             }
-                          />
-                        ))}
-                      </Document>
-                    </PDFErrorBoundary>
+                          }}
+                          onLoadError={(error) => {
+                            console.error("PDF loading error:", error);
+                            setMessages((prev) => [
+                              ...prev,
+                              {
+                                role: "assistant",
+                                content:
+                                  "I'm sorry, there was an error loading the PDF. Please try uploading again or use a different PDF file.",
+                              },
+                            ]);
+                          }}
+                          className={
+                            isTextSelectionMode ? "select-text" : "select-none"
+                          }
+                          options={pdfOptions}
+                        >
+                          {Array.from(new Array(numPages), (el, index) => (
+                            <Page
+                              key={`page_${index + 1}`}
+                              pageNumber={index + 1}
+                              className="mb-4 shadow-lg"
+                              scale={2.0} // Higher base resolution
+                              devicePixelRatio={window.devicePixelRatio || 2}
+                              renderTextLayer={isTextSelectionMode}
+                              renderAnnotationLayer={false}
+                              canvasBackground="white"
+                              loading={
+                                <div className="flex items-center justify-center p-8 text-neutral-400">
+                                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                                  Rendering high-quality page {index + 1}...
+                                </div>
+                              }
+                            />
+                          ))}
+                        </Document>
+                      </PDFErrorBoundary>
+                    </div>
                   </div>
-                </div>
 
-                {/* Instructions overlay */}
-                <div
-                  className={`absolute bottom-4 left-4 bg-neutral-900/90 backdrop-blur-sm rounded-lg p-3 text-xs text-neutral-300 transition-all duration-300 pointer-events-auto ${
-                    showInstructions
-                      ? "opacity-100 translate-y-0"
-                      : "opacity-0 translate-y-2 pointer-events-none"
-                  }`}
-                  onMouseEnter={() => setShowInstructions(true)}
-                  onMouseLeave={() => setShowInstructions(false)}
-                >
-                  <div className="flex items-center space-x-2 mb-2">
-                    <span className="font-semibold">
-                      {isTextSelectionMode ? "Text Selection" : "Pan"} Mode
-                    </span>
+                  {/* Instructions overlay - only shows when hovering the button */}
+                  <div
+                    className={`absolute bottom-14 left-4 bg-neutral-900/90 backdrop-blur-sm rounded-lg p-3 text-xs text-neutral-300 transition-all duration-300 pointer-events-none ${
+                      showInstructions
+                        ? "opacity-100 translate-y-0"
+                        : "opacity-0 translate-y-2"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2 mb-2">
+                      <span className="font-semibold">
+                        {isTextSelectionMode ? "Text Selection" : "Pan"} Mode
+                      </span>
+                      {isTextSelectionMode ? (
+                        <MousePointer2 className="h-3 w-3 text-orange-400" />
+                      ) : (
+                        <Hand className="h-3 w-3 text-orange-400" />
+                      )}
+                    </div>
+                    <div>• Ctrl + Scroll to zoom</div>
+                    <div>
+                      • {autoZoom ? "📱 Auto-zoom ON" : "🔒 Manual zoom"}
+                    </div>
                     {isTextSelectionMode ? (
-                      <MousePointer2 className="h-3 w-3 text-orange-400" />
+                      <>
+                        <div>• Click & drag to select text</div>
+                        <div>• Press 'P' for pan mode</div>
+                      </>
                     ) : (
-                      <Hand className="h-3 w-3 text-orange-400" />
+                      <>
+                        <div>• Drag to pan around</div>
+                        <div>• Press 'T' for text mode</div>
+                      </>
                     )}
+                    <div>• Resize panel to auto-fit PDF</div>
                   </div>
-                  <div>• Ctrl + Scroll to zoom</div>
-                  <div>• {autoZoom ? "📱 Auto-zoom ON" : "🔒 Manual zoom"}</div>
-                  {isTextSelectionMode ? (
-                    <>
-                      <div>• Click & drag to select text</div>
-                      <div>• Press 'P' for pan mode</div>
-                    </>
-                  ) : (
-                    <>
-                      <div>• Drag to pan around</div>
-                      <div>• Press 'T' for text mode</div>
-                    </>
-                  )}
-                  <div>• Resize panel to auto-fit PDF</div>
-                </div>
 
-                {/* Hover trigger area when instructions are hidden */}
-                {!showInstructions && (
+                  {/* Always visible help button */}
                   <div
                     className="absolute bottom-4 left-4 w-8 h-8 rounded-full bg-neutral-700/50 backdrop-blur-sm opacity-30 hover:opacity-60 transition-opacity duration-200 flex items-center justify-center cursor-help"
                     onMouseEnter={() => setShowInstructions(true)}
+                    onMouseLeave={() => setShowInstructions(false)}
                     title="Show controls help"
                   >
                     <span className="text-neutral-400 text-xs">?</span>
                   </div>
-                )}
+                </div>
               </div>
             )}
           </div>
         </Panel>
-        <PanelResizeHandle className="w-2 bg-neutral-700 hover:bg-orange-500 transition-colors" />
+        <PanelResizeHandle className="w-1 bg-neutral-700 hover:bg-orange-500 transition-colors" />
         <Panel defaultSize={50} minSize={25}>
           {/* Chat Side */}
-          <div className="w-full h-full bg-neutral-800 ml-2 mr-4 my-4 rounded-2xl shadow-xl flex flex-col border border-neutral-700">
+          <div className="w-full h-full bg-neutral-800 flex flex-col">
             <div className="px-6 py-3 border-b border-neutral-700">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-neutral-100">
@@ -1799,14 +1844,6 @@ JSON Response:`;
 
                 {messages.length > 0 && (
                   <div className="flex items-center space-x-1.5">
-                    {/* Conversation Stats */}
-                    <div className="px-2.5 py-1.5 bg-neutral-700 rounded-md">
-                      <span className="text-xs text-neutral-300">
-                        {messages.filter((m) => m.role === "user").length}{" "}
-                        questions
-                      </span>
-                    </div>
-
                     {/* Clear Chat Button */}
                     <button
                       onClick={() => {
@@ -1823,29 +1860,10 @@ JSON Response:`;
                   </div>
                 )}
               </div>
-
-              {pdfFile && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2.5">
-                    <MessageCircle className="h-5 w-5 text-orange-400" />
-                    <span className="font-medium text-neutral-200 text-sm">
-                      Analyzing:{" "}
-                      {pdfFile.name.length > 25
-                        ? pdfFile.name.substring(0, 25) + "..."
-                        : pdfFile.name}
-                    </span>
-                  </div>
-                  {pdfText && (
-                    <div className="text-xs text-neutral-500">
-                      {pdfText.length.toLocaleString()} characters extracted
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <div className="p-4 bg-neutral-700/30 rounded-2xl mb-6">
@@ -1975,7 +1993,7 @@ JSON Response:`;
             </div>
 
             {/* Message Input */}
-            <div className="px-6 py-4 border-t border-neutral-700 bg-neutral-800/50">
+            <div className="px-4 py-3 border-t border-neutral-700 bg-neutral-800/50">
               {selectedText && (
                 <div className="mb-4 p-4 bg-gradient-to-r from-orange-600/10 to-orange-500/5 rounded-xl border border-orange-600/20 backdrop-blur-sm">
                   <div className="flex items-start space-x-3">
@@ -2021,15 +2039,10 @@ JSON Response:`;
                         : "Upload a PDF to start the conversation..."
                     }
                     disabled={!pdfFile}
-                    className="w-full p-4 pr-12 border border-neutral-600/50 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 bg-neutral-700/30 backdrop-blur-sm text-neutral-200 placeholder-neutral-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    rows={3}
-                    style={{ minHeight: "80px", maxHeight: "120px" }}
+                    className="w-full p-3 border border-neutral-600/50 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 bg-neutral-700/30 text-neutral-200 placeholder-neutral-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    rows={2}
+                    style={{ minHeight: "60px", maxHeight: "100px" }}
                   />
-
-                  {/* Character counter */}
-                  <div className="absolute bottom-2 right-3 text-xs text-neutral-500">
-                    {currentMessage.length}/1000
-                  </div>
                 </div>
 
                 <div className="flex flex-col space-y-2">
@@ -2037,7 +2050,7 @@ JSON Response:`;
                   <button
                     onClick={sendMessage}
                     disabled={!currentMessage.trim() || isLoading || !pdfFile}
-                    className="group relative p-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
+                    className="group relative p-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 focus:outline-none focus:ring-1 focus:ring-orange-500/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     title={
                       !pdfFile
                         ? "Upload a PDF first"
@@ -2049,11 +2062,7 @@ JSON Response:`;
                     {isLoading ? (
                       <Loader2 className="h-5 w-5 animate-spin" />
                     ) : (
-                      <>
-                        <Send className="h-5 w-5 transition-transform group-hover:scale-110" />
-                        {/* Pulse effect on hover */}
-                        <div className="absolute inset-0 bg-orange-500 rounded-xl opacity-0 group-hover:opacity-20 transition-opacity duration-200"></div>
-                      </>
+                      <Send className="h-4 w-4" />
                     )}
                   </button>
 
@@ -2066,36 +2075,6 @@ JSON Response:`;
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Input hints */}
-              <div className="flex items-center justify-between mt-3 text-xs text-neutral-500">
-                <div className="flex items-center space-x-4">
-                  <span className="flex items-center space-x-1">
-                    <kbd className="px-1.5 py-0.5 bg-neutral-700 rounded text-xs">
-                      Enter
-                    </kbd>
-                    <span>to send</span>
-                  </span>
-                  <span className="flex items-center space-x-1">
-                    <kbd className="px-1.5 py-0.5 bg-neutral-700 rounded text-xs">
-                      Shift
-                    </kbd>
-                    <span>+</span>
-                    <kbd className="px-1.5 py-0.5 bg-neutral-700 rounded text-xs">
-                      Enter
-                    </kbd>
-                    <span>for new line</span>
-                  </span>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  {pdfFile && pdfText && (
-                    <span className="text-green-400">
-                      AI Ready • {Math.round(pdfText.length / 1000)}k context
-                    </span>
                   )}
                 </div>
               </div>

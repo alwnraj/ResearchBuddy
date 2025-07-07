@@ -1,3 +1,28 @@
 @tailwind base;
 @tailwind components;
-@tailwind utilities; 
+@tailwind utilities;
+
+/* Custom sleek scrollbar for PDF viewer */
+.pdf-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #525252 #171717;
+}
+
+.pdf-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pdf-scrollbar::-webkit-scrollbar-track {
+  background: #171717;
+  border-radius: 3px;
+}
+
+.pdf-scrollbar::-webkit-scrollbar-thumb {
+  background: #525252;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.pdf-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #ea580c;
+} 
