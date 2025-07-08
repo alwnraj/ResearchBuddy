@@ -274,6 +274,84 @@ const sanitizeJsonString = (str: string): string => {
 };
 
 /**
+ * Converts markdown text to clean, readable plain text
+ * Handles common markdown elements that Gemini might use in responses
+ *
+ * @param {string} markdown - The markdown text to convert
+ * @returns {string} - Clean plain text
+ */
+const markdownToText = (markdown: string): string => {
+  console.log("🔧 Converting markdown to plain text...");
+
+  if (!markdown || typeof markdown !== "string") {
+    console.warn("⚠️ markdownToText: Invalid input provided");
+    return "";
+  }
+
+  try {
+    let text = markdown;
+
+    // Remove markdown code blocks but keep the content
+    text = text.replace(/```[\s\S]*?\n([\s\S]*?)```/g, "$1");
+    text = text.replace(/`([^`]+)`/g, "$1");
+
+    // Convert headers to plain text with emphasis
+    text = text.replace(/^#{1,6}\s+(.+)$/gm, "$1");
+
+    // Convert bold and italic to plain text (keep content, remove formatting)
+    text = text.replace(/\*\*\*([^*]+)\*\*\*/g, "$1"); // Bold italic
+    text = text.replace(/\*\*([^*]+)\*\*/g, "$1"); // Bold
+    text = text.replace(/\*([^*]+)\*/g, "$1"); // Italic
+    text = text.replace(/__([^_]+)__/g, "$1"); // Bold alt
+    text = text.replace(/_([^_]+)_/g, "$1"); // Italic alt
+
+    // Convert lists to simple text with dashes
+    text = text.replace(/^\s*[\*\-\+]\s+(.+)$/gm, "- $1");
+    text = text.replace(/^\s*\d+\.\s+(.+)$/gm, "- $1");
+
+    // Convert links to just the text part [text](url) -> text
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+
+    // Handle academic references and citations that might be in brackets
+    text = text.replace(/\[([^\]]+)\]/g, "$1"); // Remove remaining square brackets
+
+    // Convert blockquotes
+    text = text.replace(/^>\s+(.+)$/gm, '"$1"');
+
+    // Convert horizontal rules to simple separators
+    text = text.replace(/^[-*_]{3,}\s*$/gm, "---");
+
+    // Clean up tables - convert to simple text
+    text = text.replace(/\|([^|\n]+)\|/g, (match, content) => {
+      return content
+        .split("|")
+        .map((cell: string) => cell.trim())
+        .join(" | ");
+    });
+    text = text.replace(/^\|?[-:|\s]+\|?\s*$/gm, ""); // Remove table separators
+
+    // Remove extra markdown artifacts
+    text = text.replace(/\\([*_`~#])/g, "$1"); // Unescape markdown characters
+    text = text.replace(/^\s*\|?\s*[-:]+\s*\|?\s*$/gm, ""); // Table dividers
+
+    // Clean up spacing
+    text = text.replace(/\n{3,}/g, "\n\n"); // Max 2 consecutive newlines
+    text = text.replace(/[ \t]+$/gm, ""); // Remove trailing spaces
+    text = text.replace(/^[ \t]+/gm, ""); // Remove leading spaces
+    text = text.trim();
+
+    console.log(
+      `✅ Markdown converted: ${markdown.length} -> ${text.length} chars`
+    );
+    return text;
+  } catch (error) {
+    console.error("❌ Error converting markdown to text:", error);
+    // Return original text if conversion fails
+    return markdown;
+  }
+};
+
+/**
  * Parses JSON response from Gemini API with multiple fallback strategies
  *
  * @param {string} markdown - Raw response from Gemini API
@@ -793,8 +871,9 @@ const ResearchBuddy = () => {
       setPdfFile(secureFile);
       console.log("✅ File state updated");
 
-      // Show initial success message
-      setMessages([
+      // Show initial success message - APPEND to existing conversation
+      setMessages((prev) => [
+        ...prev,
         {
           role: "assistant",
           content: `📚 Processing "${file.name}" (${(
@@ -911,17 +990,21 @@ const ResearchBuddy = () => {
       // Final success message with statistics
       const errorNote =
         pagesWithErrors > 0 ? ` (${pagesWithErrors} pages had errors)` : "";
-      setMessages((prev) => [
-        ...prev.slice(0, -1), // Remove progress message
-        {
-          role: "assistant",
-          content: `✅ Successfully processed "${
-            file.name
-          }"!\n\n📊 Statistics:\n- ${
-            pdf.numPages
-          } pages processed${errorNote}\n- ${totalChars.toLocaleString()} characters extracted\n- Processing time: ${totalTime}s\n\nI'm ready to help you analyze this research paper! You can highlight text and add it to our chat, or ask me questions about the content.`,
-        },
-      ]);
+      setMessages((prev) => {
+        // Remove the processing message we just added, but keep all previous conversation
+        const messagesWithoutLastProcessing = prev.slice(0, -1);
+        return [
+          ...messagesWithoutLastProcessing,
+          {
+            role: "assistant",
+            content: `✅ Successfully processed "${
+              file.name
+            }"!\n\n📊 Statistics:\n- ${
+              pdf.numPages
+            } pages processed${errorNote}\n- ${totalChars.toLocaleString()} characters extracted\n- Processing time: ${totalTime}s\n\nI'm ready to help you analyze this research paper! You can highlight text and add it to our chat, or ask me questions about the content.`,
+          },
+        ];
+      });
     } catch (error) {
       const errorType: ErrorType = "FILE_UPLOAD";
       const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
@@ -1203,31 +1286,233 @@ const ResearchBuddy = () => {
         `💭 Conversation history: ${conversationHistory.length} messages`
       );
 
-      // Enhanced prompt with better formatting instructions
-      const prompt = `You are a research assistant helping analyze a research paper. Here's the full conversation history and the paper content:
+      // Enhanced validation and edge case handling
+      let processedPdfText = pdfText;
+      let contextWarnings: string[] = [];
+
+      // Handle empty or minimal PDF content
+      if (!pdfText || pdfText.trim().length < 100) {
+        processedPdfText =
+          "[PDF content is minimal or unavailable. Text extraction may have failed.]";
+        contextWarnings.push("Limited PDF content available");
+        console.warn("⚠️ PDF content is minimal or empty");
+      }
+
+      // Handle very large PDF content (>100k chars) to avoid API limits
+      if (pdfText.length > 100000) {
+        // Truncate but try to keep meaningful sections
+        const truncatedText = pdfText.substring(0, 95000);
+        const lastCompleteSection = truncatedText.lastIndexOf("\n\n");
+        processedPdfText =
+          lastCompleteSection > 80000
+            ? truncatedText.substring(0, lastCompleteSection) +
+              "\n\n[Content truncated due to length...]"
+            : truncatedText + "\n\n[Content truncated due to length...]";
+        contextWarnings.push(
+          `Large PDF truncated to ${Math.round(
+            processedPdfText.length / 1000
+          )}k chars`
+        );
+        console.warn(
+          `⚠️ PDF content truncated from ${pdfText.length} to ${processedPdfText.length} characters`
+        );
+      }
+
+      // Handle very long conversation history for API context (this doesn't affect UI display)
+      let processedHistory = conversationHistory;
+      if (conversationHistory.length > 30) {
+        // Keep first 3 messages and last 25 messages to maintain better context
+        // This only affects what the AI sees for context, not what the user sees in chat
+        processedHistory = [
+          ...conversationHistory.slice(0, 3),
+          {
+            role: "assistant",
+            content:
+              "[Earlier conversation history truncated for API context - full conversation still visible to user...]",
+          },
+          ...conversationHistory.slice(-25),
+        ];
+        contextWarnings.push("Long conversation history truncated for API");
+        console.warn(
+          `⚠️ Conversation history truncated for API context from ${conversationHistory.length} to ${processedHistory.length} messages (UI still shows full history)`
+        );
+      }
+
+      // Validate conversation history for malformed content
+      const validatedHistory = processedHistory
+        .filter((msg) => msg && msg.role && msg.content)
+        .map((msg) => ({
+          role: msg.role,
+          content:
+            typeof msg.content === "string"
+              ? msg.content.substring(0, 2000)
+              : "[Invalid message content]",
+        }));
+
+      if (validatedHistory.length !== processedHistory.length) {
+        contextWarnings.push(
+          "Some conversation messages were invalid and removed"
+        );
+        console.warn(
+          "⚠️ Some conversation messages were filtered out due to invalid format"
+        );
+      }
+
+      // Check for potential encoding issues in PDF text
+      const suspiciousCharPatterns = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|/g;
+      const encodingIssues = processedPdfText.match(suspiciousCharPatterns);
+      if (encodingIssues && encodingIssues.length > 50) {
+        contextWarnings.push("PDF may have text encoding issues");
+        console.warn(
+          `⚠️ Detected ${encodingIssues.length} potential encoding issues in PDF text`
+        );
+      }
+
+      // Add context warnings to the prompt if any exist
+      const warningContext =
+        contextWarnings.length > 0
+          ? `\n\nIMPORTANT CONTEXT LIMITATIONS:\n${contextWarnings
+              .map((w) => `- ${w}`)
+              .join("\n")}\n`
+          : "";
+
+      // Enhanced prompt with comprehensive research assistant instructions and edge case handling
+      const prompt = `You are an expert research assistant with deep knowledge across multiple academic disciplines. You specialize in analyzing research papers, explaining complex concepts, and helping users understand academic literature.
+
+CONTEXT:
+- You are analyzing a research paper with ${Math.round(
+        processedPdfText.length / 1000
+      )}k characters of content
+- This is an ongoing conversation with ${conversationHistory.length} messages
+- The user may reference specific sections, highlight text, or ask general questions
 
 PAPER CONTENT:
-${pdfText}
+${processedPdfText}
 
 CONVERSATION HISTORY:
-${JSON.stringify(conversationHistory)}
+${JSON.stringify(validatedHistory)}${warningContext}
 
-Provide a helpful response about the research paper, considering the full context. Be specific and reference the paper when relevant.
+INSTRUCTIONS FOR YOUR RESPONSE:
 
-IMPORTANT: Your response must be valid JSON in this exact format:
-{"response": "Your detailed response here"}
+1. **ANALYSIS APPROACH:**
+   - Be thorough yet concise in your explanations
+   - Reference specific sections, methodologies, or findings when relevant
+   - Identify the paper's domain (e.g., machine learning, biology, economics) and adjust expertise accordingly
+   - Consider the paper's structure: abstract, introduction, methodology, results, discussion, conclusion
 
-Rules for your response:
-1. Escape all quotes inside the response text with \"
-2. Replace all newlines with \\n  
-3. Do not include any text outside the JSON object
-4. Do not use markdown code blocks
-5. Keep the response under 1000 characters to avoid formatting issues
-6. If you reference the paper, use specific page numbers or section titles
+2. **RESPONSE STRUCTURE:**
+   - Start with a direct answer to the user's question
+   - Provide supporting evidence from the paper when applicable
+   - Explain technical terms or concepts that might be unclear
+   - Suggest follow-up questions or related areas to explore
+
+3. **ACADEMIC EXPERTISE:**
+   - Evaluate methodology rigor and experimental design
+   - Identify potential limitations or biases in the research
+   - Explain statistical methods, data analysis, or theoretical frameworks
+   - Connect findings to broader research trends or implications
+
+4. **CITATION GUIDELINES:**
+   - When referencing the paper, be specific (e.g., "In the methodology section..." or "The authors report in Table 2...")
+   - Quote exact text when clarifying specific passages
+   - Distinguish between the authors' claims and your analytical commentary
+
+5. **CONVERSATION CONTEXT:**
+   - Remember previous discussion points and build upon them
+   - If the user highlights text, focus your response on that specific content
+   - Maintain conversational flow while providing academic depth
+
+6. **RESPONSE QUALITY:**
+   - Aim for clarity and accessibility without oversimplifying
+   - Use examples or analogies when explaining complex concepts
+   - Be honest about limitations in your analysis or areas requiring domain expertise
+   - Encourage critical thinking and deeper exploration
+
+7. **EDGE CASE HANDLING:**
+   
+   **Corrupted/Incomplete Text:**
+   - If the PDF content appears corrupted (random characters, encoding issues), acknowledge this limitation
+   - Focus on readable sections and mention which parts are unclear
+   - Suggest the user try re-uploading or using a different PDF version
+   
+   **Non-Academic Content:**
+   - If the document isn't a research paper (e.g., textbook, report, slides), adapt your approach accordingly
+   - Clarify the document type and adjust expectations ("This appears to be a textbook chapter rather than a research paper...")
+   
+   **Multilingual Content:**
+   - If content is in multiple languages or primarily non-English, acknowledge this
+   - Work with what's available and mention language barriers where relevant
+   
+   **Very Short/Long Content:**
+   - For abstracts only: Focus on what's available, suggest limitations of analysis
+   - For extremely long papers: Prioritize key sections and offer to focus on specific areas
+   
+   **Missing Key Sections:**
+   - If standard academic sections are missing (methods, results, etc.), note this limitation
+   - Adapt analysis to available content structure
+   
+   **Technical Formatting Issues:**
+   - If tables, figures, or equations are garbled in extraction, acknowledge this
+   - Work around formatting issues and mention when visual elements would be helpful
+   
+   **Ambiguous User Queries:**
+   - If the user's question is unclear, ask for clarification while providing a best-guess response
+   - Offer multiple interpretations when the query could mean different things
+   
+   **Off-Topic Questions:**
+   - If asked about topics not in the paper, politely redirect to paper content
+   - Offer to help find relevant sections if the topic might be covered indirectly
+   
+   **Conversation Memory Limits:**
+   - If conversation becomes very long, prioritize recent context while noting you may have limited memory of early discussions
+   - Summarize key points when helpful for continuity
+   
+   **Contradictory Information:**
+   - If the paper contains contradictory statements or unclear methodology, point this out professionally
+   - Distinguish between author errors and potential misunderstanding on your part
+
+8. **SAFETY AND ACCURACY:**
+   - Never make up information not present in the paper
+   - Clearly distinguish between what the paper states and your interpretation
+   - If unsure about technical details, express uncertainty rather than guessing
+   - For medical/health papers, include appropriate disclaimers about not providing medical advice
+
+IMPORTANT FORMATTING: Your response must be valid JSON in this exact format:
+{"response": "Your detailed and insightful response here"}
+
+Technical Requirements:
+- Escape all quotes inside the response text with \"
+- Replace all newlines with \\n  
+- Do not include any text outside the JSON object
+- IMPORTANT: Use plain text only - no markdown formatting, no **bold**, no *italics*, no code blocks, no # headers
+- Use simple text formatting: dashes for lists, quotes for emphasis, plain sentences
+- For academic citations, use simple text like "In the methodology section" or "The authors found that..."
+- Avoid symbols like *, #, [], (), backticks that could be interpreted as markdown
+- Write naturally as if speaking to a colleague, not writing a document
+- Keep responses focused but comprehensive (aim for 800-1500 characters for detailed explanations)
+- For simple questions, shorter responses (200-500 characters) are appropriate
+- If encountering edge cases, prioritize helpfulness while being transparent about limitations
 
 JSON Response:`;
 
+      // Final prompt validation for API limits
+      if (prompt.length > 200000) {
+        console.error(`❌ Prompt too long: ${prompt.length} characters`);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content:
+              "The content is too large to process all at once. Please try asking about specific sections of the paper, or consider uploading a shorter document.",
+          },
+        ]);
+        return;
+      }
+
       console.log(`📊 Prompt length: ${prompt.length} characters`);
+      if (contextWarnings.length > 0) {
+        console.log(`⚠️ Context limitations: ${contextWarnings.join(", ")}`);
+      }
       console.log("🚀 Sending request to Gemini API...");
 
       const response = await gemini.models.generateContent({
@@ -1267,13 +1552,16 @@ JSON Response:`;
           console.log("🔍 Parsed object:", aiResponse);
         }
 
+        // Convert markdown to clean text
+        const cleanResponse = aiResponse.response
+          ? markdownToText(aiResponse.response)
+          : "I received your message but the response format was incomplete. Please try asking again.";
+
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content:
-              aiResponse.response ||
-              "I received your message but the response format was incomplete. Please try asking again.",
+            content: cleanResponse,
           },
         ]);
 
@@ -1284,7 +1572,7 @@ JSON Response:`;
         console.log("🔍 Raw response for debugging:", text);
 
         // Enhanced content extraction
-        const cleanText = text
+        const extractedText = text
           .replace(/```json|```/g, "")
           .replace(/^\s*\{|\}\s*$/g, "")
           .replace(/"response"\s*:\s*"/i, "")
@@ -1293,13 +1581,16 @@ JSON Response:`;
           .replace(/\\"/g, '"')
           .trim();
 
+        // Apply markdown processing to fallback content as well
+        const cleanText = extractedText
+          ? markdownToText(extractedText)
+          : "I'm having trouble formatting my response properly. Could you please rephrase your question or try again?";
+
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content:
-              cleanText ||
-              "I'm having trouble formatting my response properly. Could you please rephrase your question or try again?",
+            content: cleanText,
           },
         ]);
 
