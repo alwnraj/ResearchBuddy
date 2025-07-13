@@ -25,4 +25,184 @@
 
 .pdf-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #ea580c;
+}
+
+/* Enhanced text selection styling */
+.select-text ::selection {
+  background: rgba(234, 88, 12, 0.3);
+  color: inherit;
+}
+
+.select-text ::-moz-selection {
+  background: rgba(234, 88, 12, 0.3);
+  color: inherit;
+}
+
+/* Text layer styling for better visibility */
+.react-pdf__Page__textContent {
+  opacity: 1 !important;
+}
+
+.react-pdf__Page__textContent span {
+  color: transparent !important;
+  position: absolute !important;
+  white-space: pre !important;
+  cursor: text !important;
+  transform-origin: 0% 0% !important;
+}
+
+/* Ensure text selection works properly in text mode */
+.select-text .react-pdf__Page__textContent span {
+  user-select: text !important;
+  pointer-events: auto !important;
+}
+
+/* Disable text selection in pan mode */
+.select-none .react-pdf__Page__textContent span {
+  user-select: none !important;
+  pointer-events: none !important;
+}
+
+/* Performance optimizations for PDF rendering */
+.react-pdf__Page {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+}
+
+.react-pdf__Page__canvas {
+  image-rendering: optimizeSpeed;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+/* Optimize transform performance */
+.pdf-transform-container {
+  will-change: transform;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+}
+
+/* Reduce repaints during panning */
+.pdf-viewer-container {
+  contain: layout style paint;
+  will-change: scroll-position;
+}
+
+/* Mobile-specific optimizations */
+@media (max-width: 768px) {
+  /* Improve touch targets */
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Optimize input for mobile */
+  input, textarea {
+    font-size: 16px; /* Prevents zoom on iOS */
+    -webkit-appearance: none;
+    border-radius: 8px;
+  }
+
+  /* Improve scrolling performance on mobile */
+  .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* Optimize text selection for mobile */
+  .select-text {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
+  /* Reduce animation on mobile for better performance */
+  .animate-spin {
+    animation-duration: 1s;
+  }
+
+  /* Optimize PDF viewer for mobile */
+  iframe {
+    /* Improve touch scrolling in iframe */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Improve floating buttons for mobile */
+  .fixed {
+    z-index: 999;
+  }
+
+  /* Ensure proper spacing for mobile keyboards */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Optimize message bubbles for mobile */
+  .max-w-\[90\%\] {
+    max-width: 85%;
+  }
+
+  /* Improve touch feedback */
+  button:active {
+    transform: scale(0.98);
+    transition: transform 0.1s ease;
+  }
+
+  /* Optimize chat input for mobile */
+  .chat-input {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+  }
+}
+
+/* Tablet-specific optimizations */
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Slightly larger touch targets for tablets */
+  button {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  /* Optimize panel sizes for tablets */
+  .tablet-panel {
+    min-width: 300px;
+  }
+}
+
+/* High-DPI display optimizations */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .react-pdf__Page__canvas {
+    image-rendering: auto;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+  }
+}
+
+/* Dark mode optimizations */
+@media (prefers-color-scheme: dark) {
+  /* Ensure proper contrast in dark mode */
+  .bg-neutral-900 {
+    background-color: #0f0f0f;
+  }
+
+  .bg-neutral-800 {
+    background-color: #1a1a1a;
+  }
+
+  .bg-neutral-700 {
+    background-color: #262626;
+  }
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 } 

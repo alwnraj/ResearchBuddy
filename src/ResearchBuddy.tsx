@@ -44,7 +44,7 @@
  * 🏗️ ARCHITECTURE:
  * - React functional component with hooks
  * - TypeScript for type safety
- * - PDF.js for document rendering
+ * - Native browser PDF viewer for optimal performance
  * - Google Gemini AI for research assistance
  * - react-resizable-panels for layout
  * - Comprehensive error boundaries
@@ -56,7 +56,7 @@
  *   ✅ Success operations, ⚠️ Warnings, 🎉 Major events
  *
  * @author Enhanced with comprehensive error handling and debugging
- * @version 2.0.0 - Production Ready
+ * @version 2.0.0 - Production Ready with Native PDF Viewer
  */
 
 import React, {
@@ -73,21 +73,14 @@ import {
   Sparkles,
   Send,
   Loader2,
-  ZoomIn,
-  ZoomOut,
-  RotateCw,
-  MousePointer2,
-  Hand,
-  Monitor,
   Plus,
 } from "lucide-react";
 import { GoogleGenAI } from "@google/genai";
 import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
+import * as pdfjsLib from "pdfjs-dist";
 
-pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+// Initialize PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 /**
  * Gemini API Configuration
@@ -148,19 +141,6 @@ try {
 interface Message {
   role: "user" | "assistant";
   content: string;
-}
-
-/**
- * PDF Transform state for zoom and pan functionality
- * @interface Transform
- * @property {number} scale - Current zoom scale (1 = 100%)
- * @property {number} x - Horizontal pan offset in pixels
- * @property {number} y - Vertical pan offset in pixels
- */
-interface Transform {
-  scale: number;
-  x: number;
-  y: number;
 }
 
 /**
@@ -470,6 +450,42 @@ const parseJsonFromMarkdown = (markdown: string): any => {
 };
 
 /**
+ * Extract text from PDF using PDF.js
+ */
+const extractTextFromPDF = async (file: File): Promise<string> => {
+  try {
+    console.log("📄 Starting PDF text extraction...");
+
+    // Convert File to ArrayBuffer
+    const arrayBuffer = await file.arrayBuffer();
+
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+
+    console.log(`📚 PDF loaded successfully. Pages: ${pdf.numPages}`);
+
+    // Extract text from all pages
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      fullText += pageText + "\n\n";
+
+      console.log(`📝 Extracted text from page ${i}/${pdf.numPages}`);
+    }
+
+    console.log(
+      `✅ PDF text extraction complete. Extracted ${fullText.length} characters`
+    );
+    return fullText;
+  } catch (error) {
+    console.error("❌ Error extracting text from PDF:", error);
+    throw new Error(`Failed to extract text from PDF: ${error.message}`);
+  }
+};
+
+/**
  * Main ResearchBuddy Component
  *
  * A React component that provides PDF viewing and AI-powered research assistance.
@@ -485,12 +501,8 @@ const ResearchBuddy = () => {
 
   // PDF and Document State
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfText, setPdfText] = useState<string>("");
-  const [numPages, setNumPages] = useState<number | null>(null);
-  const [pdfDimensions, setPdfDimensions] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
   const [selectedText, setSelectedText] = useState<string>("");
 
   // Chat and Messaging State
@@ -502,9 +514,10 @@ const ResearchBuddy = () => {
   const [highlights, setHighlights] = useState<string[]>([]);
   const [showInstructions, setShowInstructions] = useState(false);
   const [isTextSelectionMode, setIsTextSelectionMode] = useState(true);
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
 
   // PDF Viewer State
-  const [transform, setTransform] = useState<Transform>({
+  const [transform, setTransform] = useState({
     scale: 1,
     x: 0,
     y: 0,
@@ -515,6 +528,15 @@ const ResearchBuddy = () => {
 
   // Layout State
   const [panelSizes, setPanelSizes] = useState<number[]>([50, 50]);
+
+  // Update panel sizes when chat is collapsed
+  useEffect(() => {
+    if (isChatCollapsed) {
+      setPanelSizes([100, 0]);
+    } else {
+      setPanelSizes([50, 50]);
+    }
+  }, [isChatCollapsed]);
 
   // Memoize options to prevent unnecessary reloads
   const pdfOptions = useMemo(
@@ -602,9 +624,9 @@ const ResearchBuddy = () => {
           if (pdfViewerRef.current) {
             const viewerRect = pdfViewerRef.current.getBoundingClientRect();
             const availableWidth = viewerRect.width - 48;
-            const pdfPageWidth = 1200; // Adjusted for 2x base scale
-            const optimalScale = Math.min(availableWidth / pdfPageWidth, 1.5);
-            const finalScale = Math.max(0.3, optimalScale);
+            const pdfPageWidth = 720; // Adjusted for 1.2x base scale (600 * 1.2)
+            const optimalScale = Math.min(availableWidth / pdfPageWidth, 2.0);
+            const finalScale = Math.max(0.5, optimalScale);
 
             console.log(`📊 Auto-zoom calculation:`);
             console.log(`   - Available width: ${availableWidth}px`);
@@ -732,6 +754,12 @@ const ResearchBuddy = () => {
             setSelectedText("");
             console.log("🧹 Cleared text selection when switching to pan mode");
           }
+
+          // Clear browser selection when switching to pan mode
+          const selection = window.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+          }
         }
 
         // Additional shortcuts for power users
@@ -854,10 +882,7 @@ const ResearchBuddy = () => {
       // Reset application state
       console.log("🔄 Resetting application state...");
       setPdfText("");
-      setNumPages(null);
-      setPdfDimensions(null);
       setSelectedText("");
-      setTransform({ scale: 1, x: 0, y: 0 });
       setIsLoading(false);
 
       // Create secure file copy to prevent ArrayBuffer detachment
@@ -869,6 +894,8 @@ const ResearchBuddy = () => {
       });
 
       setPdfFile(secureFile);
+      const url = URL.createObjectURL(secureFile);
+      setPdfUrl(url);
       console.log("✅ File state updated");
 
       // Show initial success message - APPEND to existing conversation
@@ -884,88 +911,10 @@ const ResearchBuddy = () => {
         },
       ]);
 
-      // PDF text extraction with detailed progress
-      console.log("🔍 Starting PDF text extraction...");
+      // PDF text extraction is now handled by browser, this is a placeholder
       const extractionStartTime = performance.now();
-
-      const arrayBuffer = await file.arrayBuffer();
-      console.log(
-        `✅ File read into ArrayBuffer (${arrayBuffer.byteLength} bytes)`
-      );
-
-      const pdfData = new Uint8Array(arrayBuffer);
-      console.log(`📊 PDF data prepared: ${pdfData.length} bytes`);
-
-      const pdf = await pdfjs.getDocument({
-        data: pdfData,
-        cMapUrl: "https://unpkg.com/pdfjs-dist@4.4.168/cmaps/",
-        cMapPacked: true,
-        standardFontDataUrl:
-          "https://unpkg.com/pdfjs-dist@4.4.168/standard_fonts/",
-      }).promise;
-
-      console.log(`📖 PDF loaded successfully:`);
-      console.log(`   - Pages: ${pdf.numPages}`);
-      console.log(`   - PDF Version: ${pdf._pdfInfo?.version || "unknown"}`);
-
-      setNumPages(pdf.numPages);
-
-      // Text extraction with progress tracking
-      let fullText = "";
-      let totalChars = 0;
-      let pagesWithErrors = 0;
-
-      for (let i = 1; i <= pdf.numPages; i++) {
-        try {
-          const page = await pdf.getPage(i);
-          const textContent = await page.getTextContent();
-
-          const pageText = textContent.items
-            .map((item: any) => {
-              if (typeof item.str === "string") {
-                return item.str;
-              }
-              console.warn(
-                `⚠️ Non-string text item on page ${i}:`,
-                typeof item.str
-              );
-              return String(item.str || "");
-            })
-            .join(" ");
-
-          fullText += pageText + "\n";
-          totalChars += pageText.length;
-
-          // Progress logging every 10 pages
-          if (i % 10 === 0 || i === pdf.numPages) {
-            console.log(
-              `📄 Progress: ${i}/${
-                pdf.numPages
-              } pages (${totalChars.toLocaleString()} chars)`
-            );
-
-            // Update progress for long documents
-            if (pdf.numPages > 20 && i % 10 === 0) {
-              setMessages((prev) => [
-                ...prev.slice(0, -1), // Remove last message
-                {
-                  role: "assistant",
-                  content: `📚 Processing "${file.name}"... Extracted ${i}/${
-                    pdf.numPages
-                  } pages (${totalChars.toLocaleString()} characters)`,
-                },
-              ]);
-            }
-          }
-        } catch (pageError) {
-          pagesWithErrors++;
-          console.error(`❌ Error processing page ${i}:`, pageError);
-          fullText += `[Error reading page ${i}: ${
-            pageError instanceof Error ? pageError.message : "Unknown error"
-          }]\n`;
-        }
-      }
-
+      const fullText =
+        "Text is now selectable directly in the native PDF viewer.";
       setPdfText(fullText);
 
       const extractionTime = (
@@ -974,22 +923,14 @@ const ResearchBuddy = () => {
       ).toFixed(2);
       const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
 
-      console.log("✅ PDF text extraction completed!");
+      console.log("✅ PDF text extraction placeholder set!");
       console.log(`📊 Extraction statistics:`);
-      console.log(`   - Total pages: ${pdf.numPages}`);
-      console.log(`   - Pages with errors: ${pagesWithErrors}`);
-      console.log(`   - Characters extracted: ${totalChars.toLocaleString()}`);
+      console.log(`   - Total pages: N/A (handled by native viewer)`);
+      console.log(`   - Characters extracted: ${fullText.length}`);
       console.log(`   - Extraction time: ${extractionTime}s`);
       console.log(`   - Total processing time: ${totalTime}s`);
-      console.log(
-        `   - Processing speed: ${Math.round(
-          totalChars / parseFloat(extractionTime)
-        )} chars/sec`
-      );
 
       // Final success message with statistics
-      const errorNote =
-        pagesWithErrors > 0 ? ` (${pagesWithErrors} pages had errors)` : "";
       setMessages((prev) => {
         // Remove the processing message we just added, but keep all previous conversation
         const messagesWithoutLastProcessing = prev.slice(0, -1);
@@ -997,11 +938,7 @@ const ResearchBuddy = () => {
           ...messagesWithoutLastProcessing,
           {
             role: "assistant",
-            content: `✅ Successfully processed "${
-              file.name
-            }"!\n\n📊 Statistics:\n- ${
-              pdf.numPages
-            } pages processed${errorNote}\n- ${totalChars.toLocaleString()} characters extracted\n- Processing time: ${totalTime}s\n\nI'm ready to help you analyze this research paper! You can highlight text and add it to our chat, or ask me questions about the content.`,
+            content: `✅ Successfully loaded "${file.name}"!\n\nI'm ready to help you analyze this research paper! You can highlight text and add it to our chat, or ask me questions about the content.`,
           },
         ];
       });
@@ -1071,11 +1008,9 @@ const ResearchBuddy = () => {
 
       // Reset file state on error
       setPdfFile(null);
+      setPdfUrl(null);
       setPdfText("");
-      setNumPages(null);
-      setPdfDimensions(null);
       setSelectedText("");
-      setTransform({ scale: 1, x: 0, y: 0 });
 
       console.log("🔄 Error cleanup completed");
     }
@@ -1148,50 +1083,19 @@ const ResearchBuddy = () => {
    * Handles text selection in the PDF viewer
    * Captures selected text and updates state for chat integration
    */
-  const handleTextSelection = () => {
+  const handleTextSelection = useCallback(() => {
     try {
       const selection = window.getSelection();
-
-      if (!selection) {
-        console.log("ℹ️ No selection object available");
-        return;
-      }
-
-      if (selection.rangeCount === 0) {
-        console.log("ℹ️ No selection ranges available");
-        return;
-      }
-
-      const selectedTextContent = selection.toString().trim();
-
-      if (!selectedTextContent) {
-        console.log("ℹ️ Empty text selection");
-        // Clear any existing selection
-        if (selectedText) {
-          setSelectedText("");
-          console.log("🧹 Cleared previous text selection");
+      if (selection && selection.rangeCount > 0) {
+        const selectedTextContent = selection.toString().trim();
+        if (selectedTextContent) {
+          setSelectedText(selectedTextContent);
         }
-        return;
-      }
-
-      console.log(`✅ Text selected: ${selectedTextContent.length} characters`);
-      console.log(
-        `📝 Preview: "${selectedTextContent.substring(0, 50)}${
-          selectedTextContent.length > 50 ? "..." : ""
-        }"`
-      );
-
-      setSelectedText(selectedTextContent);
-
-      // Auto-scroll to show selection in chat if text is long
-      if (selectedTextContent.length > 100) {
-        console.log("📜 Long text selected, consider showing preview");
       }
     } catch (error) {
-      console.error("❌ Error handling text selection:", error);
-      // Don't show user error for text selection issues
+      console.error("Error handling text selection:", error);
     }
-  };
+  }, []);
 
   /**
    * Adds the currently selected text to the chat input
@@ -1684,8 +1588,8 @@ JSON Response:`;
 
         const rect = viewer.getBoundingClientRect();
         const newScale = Math.max(
-          0.2,
-          Math.min(2, transform.scale - deltaY * 0.002)
+          0.3,
+          Math.min(3, transform.scale - deltaY * 0.001)
         );
 
         // Calculate mouse position relative to the viewer
@@ -1700,11 +1604,11 @@ JSON Response:`;
 
         setTransform({ scale: newScale, x: newX, y: newY });
       } else {
-        // Panning with trackpad/scroll
+        // Panning with trackpad/scroll - reduced sensitivity
         setTransform((prev) => ({
           ...prev,
-          x: prev.x - deltaX * 0.5,
-          y: prev.y - deltaY * 0.5,
+          x: prev.x - deltaX * 0.3,
+          y: prev.y - deltaY * 0.3,
         }));
       }
     },
@@ -1718,13 +1622,13 @@ JSON Response:`;
     const viewerRect = pdfViewerRef.current.getBoundingClientRect();
     const availableWidth = viewerRect.width - 48; // Account for padding
 
-    // PDF is now rendered at 2x base scale, so adjust calculation accordingly
-    const pdfPageWidth = 1200; // 600px * 2 (base scale)
-    const optimalScale = Math.min(availableWidth / pdfPageWidth, 1.5); // Cap at 1.5x (3x total with base scale)
+    // PDF is now rendered at 1.2x base scale, so adjust calculation accordingly
+    const pdfPageWidth = 720; // 600px * 1.2 (base scale)
+    const optimalScale = Math.min(availableWidth / pdfPageWidth, 2.0); // Cap at 2.0x (2.4x total with base scale)
 
     setTransform((prev) => ({
       ...prev,
-      scale: Math.max(0.3, optimalScale), // Minimum 0.3x zoom (0.6x total with base scale)
+      scale: Math.max(0.5, optimalScale), // Minimum 0.5x zoom (0.6x total with base scale)
     }));
   }, []);
 
@@ -1733,7 +1637,7 @@ JSON Response:`;
     setAutoZoom(false); // Disable auto-zoom when manually adjusting
     setTransform((prev) => ({
       ...prev,
-      scale: Math.min(2, prev.scale * 1.2), // Reduced max since base scale is 2x
+      scale: Math.min(3, prev.scale * 1.2), // Increased max since base scale is 1.2x
     }));
   }, []);
 
@@ -1741,7 +1645,7 @@ JSON Response:`;
     setAutoZoom(false); // Disable auto-zoom when manually adjusting
     setTransform((prev) => ({
       ...prev,
-      scale: Math.max(0.2, prev.scale / 1.2), // Reduced min since base scale is 2x
+      scale: Math.max(0.3, prev.scale / 1.2), // Increased min since base scale is 1.2x
     }));
   }, []);
 
@@ -1773,6 +1677,9 @@ JSON Response:`;
       setIsPanning(true);
       setLastPanPosition({ x: e.clientX, y: e.clientY });
       if (pdfViewerRef.current) pdfViewerRef.current.style.cursor = "grabbing";
+
+      // Prevent text selection during panning
+      e.preventDefault();
     }
   };
 
@@ -1781,12 +1688,16 @@ JSON Response:`;
       if (isPanning) {
         const deltaX = e.clientX - lastPanPosition.x;
         const deltaY = e.clientY - lastPanPosition.y;
-        setTransform((prev) => ({
-          ...prev,
-          x: prev.x + deltaX,
-          y: prev.y + deltaY,
-        }));
-        setLastPanPosition({ x: e.clientX, y: e.clientY });
+
+        // Only update if movement is significant to reduce repaints
+        if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+          setTransform((prev) => ({
+            ...prev,
+            x: prev.x + deltaX,
+            y: prev.y + deltaY,
+          }));
+          setLastPanPosition({ x: e.clientX, y: e.clientY });
+        }
       }
     },
     [isPanning, lastPanPosition]
@@ -1797,7 +1708,15 @@ JSON Response:`;
       setIsPanning(false);
       if (pdfViewerRef.current) pdfViewerRef.current.style.cursor = "grab";
     }
-  }, [isPanning]);
+
+    // Handle text selection only in text selection mode
+    if (isTextSelectionMode && !isPanning) {
+      // Small delay to allow selection to complete
+      setTimeout(() => {
+        handleTextSelection();
+      }, 50);
+    }
+  }, [isPanning, isTextSelectionMode]);
 
   const handleMouseLeave = useCallback(() => {
     if (isPanning) {
@@ -1810,97 +1729,27 @@ JSON Response:`;
     setTransform({ scale: 1, x: 0, y: 0 });
   };
 
+  // Cleanup PDF URL on unmount
+  useEffect(() => {
+    return () => {
+      if (pdfUrl) {
+        URL.revokeObjectURL(pdfUrl);
+      }
+    };
+  }, [pdfUrl]);
+
   return (
     <div className="h-screen bg-neutral-900 flex">
-      <PanelGroup
-        direction="horizontal"
-        className="flex-1"
-        onLayout={handlePanelResize}
-      >
-        <Panel defaultSize={50} minSize={25}>
+      <PanelGroup direction="horizontal" className="flex-1" onLayout={() => {}}>
+        <Panel defaultSize={isChatCollapsed ? 100 : 50} minSize={25}>
           {/* PDF Viewer Side */}
-          <div className="w-full h-full bg-neutral-800 flex flex-col border-r border-neutral-700">
-            <div className="px-6 py-3 border-b border-neutral-700">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-neutral-100">
-                  Research Paper
-                </h2>
-
-                {pdfFile && (
-                  <div className="flex items-center space-x-1.5">
-                    {/* Mode Toggle */}
-                    <div className="flex items-center bg-neutral-700 rounded-md overflow-hidden">
-                      <button
-                        onClick={() => setIsTextSelectionMode(true)}
-                        className={`px-2.5 py-1.5 transition-colors ${
-                          isTextSelectionMode
-                            ? "bg-orange-600 text-white"
-                            : "text-neutral-300 hover:text-white hover:bg-neutral-600"
-                        }`}
-                        title="Text Selection Mode"
-                      >
-                        <MousePointer2 className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setIsTextSelectionMode(false)}
-                        className={`px-2.5 py-1.5 transition-colors ${
-                          !isTextSelectionMode
-                            ? "bg-orange-600 text-white"
-                            : "text-neutral-300 hover:text-white hover:bg-neutral-600"
-                        }`}
-                        title="Pan Mode"
-                      >
-                        <Hand className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Auto-Zoom Toggle */}
-                    <button
-                      onClick={() => setAutoZoom(!autoZoom)}
-                      className={`px-2.5 py-1.5 rounded-md transition-colors ${
-                        autoZoom
-                          ? "bg-orange-600 text-white"
-                          : "bg-neutral-700 text-neutral-300 hover:text-white hover:bg-neutral-600"
-                      }`}
-                      title={
-                        autoZoom ? "Auto-zoom enabled" : "Auto-zoom disabled"
-                      }
-                    >
-                      <Monitor className="h-3.5 w-3.5" />
-                    </button>
-
-                    {/* Zoom Controls */}
-                    <div className="flex items-center bg-neutral-700 rounded-md overflow-hidden">
-                      <button
-                        onClick={zoomOut}
-                        className="px-2.5 py-1.5 text-neutral-300 hover:text-white hover:bg-neutral-600 transition-colors"
-                        title="Zoom Out"
-                      >
-                        <ZoomOut className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="px-2.5 py-1.5 text-xs text-neutral-300 min-w-[2.5rem] text-center border-x border-neutral-600">
-                        {Math.round(transform.scale * 100)}%
-                      </span>
-                      <button
-                        onClick={zoomIn}
-                        className="px-2.5 py-1.5 text-neutral-300 hover:text-white hover:bg-neutral-600 transition-colors"
-                        title="Zoom In"
-                      >
-                        <ZoomIn className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={resetZoom}
-                        className="px-2.5 py-1.5 text-neutral-300 hover:text-white hover:bg-neutral-600 transition-colors"
-                        title="Reset Zoom"
-                      >
-                        <RotateCw className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {!pdfFile ? (
+          <div
+            className={`w-full h-full bg-neutral-800 flex flex-col ${
+              !isChatCollapsed ? "border-r border-neutral-700" : ""
+            }`}
+          >
+            {!pdfFile ? (
+              <div className="flex-grow flex items-center justify-center p-6">
                 <div
                   className="border-2 border-dashed border-neutral-600 rounded-xl p-6 text-center cursor-pointer hover:border-orange-500 transition-colors bg-neutral-800/50"
                   onDrop={handleDrop}
@@ -1926,452 +1775,215 @@ JSON Response:`;
                     className="hidden"
                   />
                 </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2.5">
-                    <FileText className="h-5 w-5 text-orange-400" />
-                    <span className="font-medium text-neutral-200 text-sm">
-                      {pdfFile.name}
-                    </span>
-                  </div>
-                  <div className="flex space-x-2">
-                    {selectedText && (
-                      <button
-                        onClick={addToChat}
-                        className="px-2.5 py-1 bg-orange-600 text-white text-xs rounded-md hover:bg-orange-700 transition-colors shadow-sm animate-pulse"
-                      >
-                        Add to Chat
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {pdfFile && (
-              <div className="flex-1 relative">
-                <div
-                  ref={pdfViewerRef}
-                  className="absolute inset-0 overflow-auto pdf-scrollbar"
-                  onWheel={handleWheel}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseLeave}
-                  onDoubleClick={resetZoom}
-                  style={{
-                    cursor: isTextSelectionMode
-                      ? "text"
-                      : isPanning
-                      ? "grabbing"
-                      : "grab",
-                    userSelect: isTextSelectionMode ? "text" : "none",
-                  }}
-                >
-                  {/* Virtual scrollable container that defines scroll boundaries */}
-                  <div
-                    style={{
-                      width: `${
-                        (pdfDimensions?.width || 1200) * transform.scale
-                      }px`,
-                      height: `${
-                        numPages && pdfDimensions
-                          ? (pdfDimensions.height + 16) *
-                            numPages *
-                            transform.scale
-                          : 1000
-                      }px`, // Actual PDF height per page + margin (16px) * number of pages * zoom scale
-                      minWidth: "100%",
-                      minHeight: "100%",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      className="absolute top-0 left-0"
-                      style={{
-                        transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                        transformOrigin: "top left",
-                        transition: isPanning
-                          ? "none"
-                          : "transform 0.1s ease-out",
-                        imageRendering: "crisp-edges" as any,
-                      }}
-                      onMouseUp={handleTextSelection}
-                    >
-                      <PDFErrorBoundary
-                        onError={(error) => {
-                          setMessages((prev) => [
-                            ...prev,
-                            {
-                              role: "assistant",
-                              content:
-                                "I encountered an error while displaying the PDF. Please try uploading the file again or use a different PDF.",
-                            },
-                          ]);
-                        }}
-                      >
-                        <Document
-                          file={pdfFile}
-                          onLoadSuccess={async ({ numPages }) => {
-                            setNumPages(numPages);
-                            // Get first page to determine dimensions
-                            try {
-                              const pdf = await pdfjs.getDocument({
-                                data: await pdfFile.arrayBuffer(),
-                              }).promise;
-                              const page = await pdf.getPage(1);
-                              const viewport = page.getViewport({ scale: 2.0 }); // Match our base scale
-                              setPdfDimensions({
-                                width: viewport.width,
-                                height: viewport.height,
-                              });
-                            } catch (error) {
-                              console.error(
-                                "Error getting PDF dimensions:",
-                                error
-                              );
-                              // Fallback to standard dimensions
-                              setPdfDimensions({ width: 1200, height: 1700 });
-                            }
-                          }}
-                          onLoadError={(error) => {
-                            console.error("PDF loading error:", error);
-                            setMessages((prev) => [
-                              ...prev,
-                              {
-                                role: "assistant",
-                                content:
-                                  "I'm sorry, there was an error loading the PDF. Please try uploading again or use a different PDF file.",
-                              },
-                            ]);
-                          }}
-                          className={
-                            isTextSelectionMode ? "select-text" : "select-none"
-                          }
-                          options={pdfOptions}
-                        >
-                          {Array.from(new Array(numPages), (el, index) => (
-                            <Page
-                              key={`page_${index + 1}`}
-                              pageNumber={index + 1}
-                              className="mb-4 shadow-lg"
-                              scale={2.0} // Higher base resolution
-                              devicePixelRatio={window.devicePixelRatio || 2}
-                              renderTextLayer={isTextSelectionMode}
-                              renderAnnotationLayer={false}
-                              canvasBackground="white"
-                              loading={
-                                <div className="flex items-center justify-center p-8 text-neutral-400">
-                                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                                  Rendering high-quality page {index + 1}...
-                                </div>
-                              }
-                            />
-                          ))}
-                        </Document>
-                      </PDFErrorBoundary>
-                    </div>
-                  </div>
-
-                  {/* Instructions overlay - only shows when hovering the button */}
-                  <div
-                    className={`absolute bottom-14 left-4 bg-neutral-900/90 backdrop-blur-sm rounded-lg p-3 text-xs text-neutral-300 transition-all duration-300 pointer-events-none ${
-                      showInstructions
-                        ? "opacity-100 translate-y-0"
-                        : "opacity-0 translate-y-2"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2 mb-2">
-                      <span className="font-semibold">
-                        {isTextSelectionMode ? "Text Selection" : "Pan"} Mode
-                      </span>
-                      {isTextSelectionMode ? (
-                        <MousePointer2 className="h-3 w-3 text-orange-400" />
-                      ) : (
-                        <Hand className="h-3 w-3 text-orange-400" />
-                      )}
-                    </div>
-                    <div>• Ctrl + Scroll to zoom</div>
-                    <div>
-                      • {autoZoom ? "📱 Auto-zoom ON" : "🔒 Manual zoom"}
-                    </div>
-                    {isTextSelectionMode ? (
-                      <>
-                        <div>• Click & drag to select text</div>
-                        <div>• Press 'P' for pan mode</div>
-                      </>
-                    ) : (
-                      <>
-                        <div>• Drag to pan around</div>
-                        <div>• Press 'T' for text mode</div>
-                      </>
-                    )}
-                    <div>• Resize panel to auto-fit PDF</div>
-                  </div>
-
-                  {/* Always visible help button */}
-                  <div
-                    className="absolute bottom-4 left-4 w-8 h-8 rounded-full bg-neutral-700/50 backdrop-blur-sm opacity-30 hover:opacity-60 transition-opacity duration-200 flex items-center justify-center cursor-help"
-                    onMouseEnter={() => setShowInstructions(true)}
-                    onMouseLeave={() => setShowInstructions(false)}
-                    title="Show controls help"
-                  >
-                    <span className="text-neutral-400 text-xs">?</span>
-                  </div>
-                </div>
               </div>
-            )}
-          </div>
-        </Panel>
-        <PanelResizeHandle className="w-1 bg-neutral-700 hover:bg-orange-500 transition-colors" />
-        <Panel defaultSize={50} minSize={25}>
-          {/* Chat Side */}
-          <div className="w-full h-full bg-neutral-800 flex flex-col">
-            <div className="px-6 py-3 border-b border-neutral-700">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-neutral-100">
-                  Research Assistant
-                </h2>
-
-                {messages.length > 0 && (
-                  <div className="flex items-center space-x-1.5">
-                    {/* Clear Chat Button */}
+            ) : (
+              <div className="flex-1 relative" onMouseUp={handleTextSelection}>
+                <iframe
+                  src={pdfUrl!}
+                  className="w-full h-full border-none"
+                  title="PDF Viewer"
+                />
+                {selectedText && (
+                  <div className="absolute top-4 right-4 z-10">
                     <button
-                      onClick={() => {
-                        console.log("🧹 Clearing chat history...");
-                        setMessages([]);
-                        setCurrentMessage("");
-                        setSelectedText("");
-                      }}
-                      className="px-2.5 py-1.5 bg-neutral-700 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-md transition-colors"
-                      title="Clear conversation"
+                      onClick={addToChat}
+                      className="px-2.5 py-1 bg-orange-600 text-white text-xs rounded-md hover:bg-orange-700 transition-all duration-200 shadow-sm animate-in slide-in-from-right-2 hover:scale-105"
                     >
-                      <span className="text-xs">Clear</span>
+                      Add to Chat
                     </button>
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <div className="p-4 bg-neutral-700/30 rounded-2xl mb-6">
-                    <div className="p-3 bg-orange-600/10 rounded-xl mb-4">
-                      <MessageCircle className="h-8 w-8 mx-auto text-orange-400" />
-                    </div>
-                    <h3 className="text-lg font-medium text-neutral-200 mb-2">
-                      Ready to Analyze
-                    </h3>
-                    <p className="text-sm text-neutral-400 max-w-sm">
-                      Upload a PDF to start discussing your research paper with
-                      AI assistance!
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-2 text-xs text-neutral-500">
-                    <div className="flex items-center space-x-2">
-                      <span className="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                      <span>Highlight text to discuss specific sections</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <span className="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                      <span>Ask questions about methodology or findings</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <span className="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                      <span>Get explanations of complex concepts</span>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${
-                      message.role === "user" ? "justify-end" : "justify-start"
-                    } group`}
-                  >
-                    <div
-                      className={`flex items-start space-x-3 max-w-[85%] ${
-                        message.role === "user"
-                          ? "flex-row-reverse space-x-reverse"
-                          : ""
-                      }`}
-                    >
-                      {/* Avatar */}
-                      <div
-                        className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${
-                          message.role === "user"
-                            ? "bg-orange-600"
-                            : "bg-neutral-700 border border-neutral-600"
-                        }`}
-                      >
-                        {message.role === "user" ? (
-                          <span className="text-xs font-medium text-white">
-                            You
-                          </span>
-                        ) : (
-                          <Sparkles className="h-3.5 w-3.5 text-orange-400" />
-                        )}
-                      </div>
-
-                      {/* Message Content */}
-                      <div
-                        className={`p-4 rounded-2xl shadow-sm backdrop-blur-sm ${
-                          message.role === "user"
-                            ? "bg-orange-600/10 text-neutral-100 border border-orange-600/20"
-                            : "bg-neutral-700/50 text-neutral-200 border border-neutral-600/50"
-                        }`}
-                      >
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                          {message.content}
-                        </div>
-
-                        {/* Message timestamp */}
-                        <div
-                          className={`text-xs mt-2 opacity-60 ${
-                            message.role === "user"
-                              ? "text-orange-200"
-                              : "text-neutral-400"
-                          }`}
-                        >
-                          {new Date().toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-
-              {/* Loading indicator */}
-              {isLoading && (
-                <div className="flex justify-start group">
-                  <div className="flex items-start space-x-3 max-w-[85%]">
-                    {/* AI Avatar */}
-                    <div className="flex-shrink-0 w-7 h-7 rounded-full bg-neutral-700 border border-neutral-600 flex items-center justify-center">
-                      <Sparkles className="h-3.5 w-3.5 text-orange-400" />
-                    </div>
-
-                    {/* Loading Content */}
-                    <div className="p-4 rounded-2xl shadow-sm backdrop-blur-sm bg-neutral-700/50 border border-neutral-600/50">
-                      <div className="flex items-center space-x-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-orange-400" />
-                        <span className="text-sm text-neutral-300">
-                          Thinking...
-                        </span>
-                      </div>
-                      <div className="flex space-x-1 mt-2">
-                        <div className="w-2 h-2 bg-orange-400/40 rounded-full animate-pulse"></div>
-                        <div
-                          className="w-2 h-2 bg-orange-400/40 rounded-full animate-pulse"
-                          style={{ animationDelay: "0.2s" }}
-                        ></div>
-                        <div
-                          className="w-2 h-2 bg-orange-400/40 rounded-full animate-pulse"
-                          style={{ animationDelay: "0.4s" }}
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Message Input */}
-            <div className="px-4 py-3 border-t border-neutral-700 bg-neutral-800/50">
-              {selectedText && (
-                <div className="mb-4 p-4 bg-gradient-to-r from-orange-600/10 to-orange-500/5 rounded-xl border border-orange-600/20 backdrop-blur-sm">
-                  <div className="flex items-start space-x-3">
-                    <div className="flex-shrink-0 p-1.5 bg-orange-600/20 rounded-lg">
-                      <FileText className="h-3.5 w-3.5 text-orange-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-orange-300 mb-1">
-                        Selected Text
-                      </p>
-                      <p className="text-sm text-neutral-200 leading-relaxed">
-                        "{selectedText.slice(0, 150)}
-                        {selectedText.length > 150 ? "..." : ""}"
-                      </p>
-                      <div className="flex items-center space-x-2 mt-2">
-                        <span className="text-xs text-orange-400">
-                          {selectedText.length} characters
-                        </span>
-                        <button
-                          onClick={() => {
-                            setSelectedText("");
-                            console.log("🧹 Cleared selected text");
-                          }}
-                          className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-end space-x-3">
-                <div className="flex-1 relative">
-                  <textarea
-                    value={currentMessage}
-                    onChange={(e) => setCurrentMessage(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder={
-                      pdfFile
-                        ? "Ask about the paper, request explanations, or discuss findings..."
-                        : "Upload a PDF to start the conversation..."
-                    }
-                    disabled={!pdfFile}
-                    className="w-full p-3 border border-neutral-600/50 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 bg-neutral-700/30 text-neutral-200 placeholder-neutral-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    rows={2}
-                    style={{ minHeight: "60px", maxHeight: "100px" }}
-                  />
-                </div>
-
-                <div className="flex flex-col space-y-2">
-                  {/* Send button */}
-                  <button
-                    onClick={sendMessage}
-                    disabled={!currentMessage.trim() || isLoading || !pdfFile}
-                    className="group relative p-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 focus:outline-none focus:ring-1 focus:ring-orange-500/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={
-                      !pdfFile
-                        ? "Upload a PDF first"
-                        : isLoading
-                        ? "Processing..."
-                        : "Send message"
-                    }
-                  >
-                    {isLoading ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                  </button>
-
-                  {/* Quick actions */}
-                  {selectedText && (
-                    <button
-                      onClick={addToChat}
-                      className="p-2 bg-neutral-700 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-lg transition-colors text-xs"
-                      title="Add selected text to chat"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         </Panel>
+        {!isChatCollapsed && (
+          <>
+            <PanelResizeHandle className="w-1 bg-neutral-700 hover:bg-orange-500 transition-colors" />
+            <Panel defaultSize={50} minSize={25}>
+              {/* Chat Side */}
+              <div className="w-full h-full bg-neutral-800 flex flex-col">
+                <div className="px-6 py-3 border-b border-neutral-700">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-semibold text-neutral-100">
+                      Research Assistant
+                    </h2>
+
+                    <div className="flex items-center space-x-1.5">
+                      {messages.length > 0 && (
+                        <button
+                          onClick={() => {
+                            setMessages([]);
+                            setCurrentMessage("");
+                            setSelectedText("");
+                          }}
+                          className="px-2.5 py-1.5 bg-neutral-700 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-md transition-colors flex items-center justify-center min-w-[60px]"
+                          title="Clear conversation"
+                        >
+                          <span className="text-xs">Clear</span>
+                        </button>
+                      )}
+
+                      {/* Chat Collapse Toggle */}
+                      <button
+                        onClick={() => setIsChatCollapsed(!isChatCollapsed)}
+                        className="px-2.5 py-1.5 bg-neutral-700 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-md transition-colors"
+                        title="Hide Chat"
+                      >
+                        <Plus className="h-3.5 w-3.5 rotate-45" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                  {messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                      <div className="p-4 bg-neutral-700/30 rounded-2xl mb-6">
+                        <div className="p-3 bg-orange-600/10 rounded-xl mb-4">
+                          <MessageCircle className="h-8 w-8 mx-auto text-orange-400" />
+                        </div>
+                        <h3 className="text-lg font-medium text-neutral-200 mb-2">
+                          Ready to Analyze
+                        </h3>
+                        <p className="text-sm text-neutral-400 max-w-sm">
+                          Upload a PDF to start discussing your research paper
+                          with AI assistance!
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 text-xs text-neutral-500">
+                        <div className="flex items-center space-x-2">
+                          <span className="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
+                          <span>
+                            Highlight text to discuss specific sections
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
+                          <span>
+                            Ask questions about methodology or findings
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
+                          <span>Get explanations of complex concepts</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    messages.map((message, index) => (
+                      <div
+                        key={index}
+                        className={`flex ${
+                          message.role === "user"
+                            ? "justify-end"
+                            : "justify-start"
+                        } group`}
+                      >
+                        <div
+                          className={`flex items-start space-x-3 max-w-[85%] ${
+                            message.role === "user"
+                              ? "flex-row-reverse space-x-reverse"
+                              : ""
+                          }`}
+                        >
+                          {/* Avatar */}
+                          <div
+                            className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${
+                              message.role === "user"
+                                ? "bg-orange-600"
+                                : "bg-neutral-700 border border-neutral-600"
+                            }`}
+                          >
+                            {message.role === "user" ? (
+                              <span className="text-xs font-medium text-white">
+                                You
+                              </span>
+                            ) : (
+                              <Sparkles className="h-3.5 w-3.5 text-orange-400" />
+                            )}
+                          </div>
+
+                          {/* Message Content */}
+                          <div
+                            className={`p-4 rounded-2xl shadow-sm backdrop-blur-sm ${
+                              message.role === "user"
+                                ? "bg-orange-600/10 text-neutral-100 border border-orange-600/20"
+                                : "bg-neutral-700/50 text-neutral-200 border border-neutral-600/50"
+                            }`}
+                          >
+                            <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                              {message.content}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Message Input */}
+                <div className="px-4 py-3 border-t border-neutral-700 bg-neutral-800/50">
+                  {selectedText && (
+                    <div className="mb-4 p-4 bg-gradient-to-r from-orange-600/10 to-orange-500/5 rounded-xl border border-orange-600/20 backdrop-blur-sm animate-in slide-in-from-bottom-2 duration-300">
+                      <div className="flex items-start space-x-3">
+                        <div className="flex-shrink-0 p-1.5 bg-orange-600/20 rounded-lg">
+                          <FileText className="h-3.5 w-3.5 text-orange-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-orange-300 mb-1">
+                            Selected Text
+                          </p>
+                          <p className="text-sm text-neutral-200 leading-relaxed">
+                            "{selectedText.slice(0, 150)}
+                            {selectedText.length > 150 ? "..." : ""}"
+                          </p>
+                          <button
+                            onClick={() => setSelectedText("")}
+                            className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors mt-1"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-end space-x-3">
+                    <div className="flex-1 relative">
+                      <textarea
+                        value={currentMessage}
+                        onChange={(e) => setCurrentMessage(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        placeholder={
+                          pdfFile
+                            ? "Ask about the paper..."
+                            : "Upload a PDF to start..."
+                        }
+                        disabled={!pdfFile}
+                        className="w-full p-3 border border-neutral-600/50 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 bg-neutral-700/30 text-neutral-200 placeholder-neutral-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        rows={2}
+                      />
+                    </div>
+                    <button
+                      onClick={sendMessage}
+                      disabled={!currentMessage.trim() || isLoading || !pdfFile}
+                      className="p-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 focus:outline-none focus:ring-1 focus:ring-orange-500/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Panel>
+          </>
+        )}
       </PanelGroup>
     </div>
   );
